@@ -1,6 +1,6 @@
 #!/usr/bin/env python
-import sys; assert sys.version_info[:2] in [(3, 6)]
-import argparse, asyncio, os, logging, logging.config, json, hashlib, time
+
+import sys, argparse, asyncio, os, logging, logging.config, json, hashlib, time
 
 
 logger = None
