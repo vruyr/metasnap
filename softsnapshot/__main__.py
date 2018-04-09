@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import sys, argparse, asyncio, os, logging, logging.config, json, hashlib, time
+import sys, argparse, asyncio, os, logging, logging.config, json, hashlib, time, pathlib
 
 
 logger = None
@@ -12,47 +12,103 @@ hash_algo = "sha1"
 async def main(*, argv=None, loop=None):
 	opts = _parse_args(argv=argv)
 	_configure_logging(opts)
-	#TODO Verify that the output folder is for the same input folder
 
-	files = None
-	file_list_path = os.path.join(opts.output_path, "files.json")
-	if os.path.exists(file_list_path):
-		logger.info("Loading file list from %r.", file_list_path)
-		files = await load_json_file(file_list_path)
-		logger.info("Loaded %s files.", "{:,}".format(len(files)))
-	else:
-		logger.info("Traversing the folder recursively %r.", opts.input_path)
-		files = traverse(opts.input_path)
-		files.sort()
-		logger.info("Found %s files.", "{:,}".format(len(files)))
-		logger.info("Writing the list of files to %r.", file_list_path)
-		await write_json_file(file_list_path, files)
+	files_input = traverse(opts.input_path)
 
-	os.makedirs(os.path.join(opts.output_path, "files"), exist_ok=True)
+	if opts.update:
+		await write_files_list(opts.output_path, files_input)
 
-	logger.info("Processing files.")
+		os.makedirs(os.path.join(opts.output_path, "files"), exist_ok=True)
 
-	num_files = len(files)
-	num_files_processed = 0
-	num_files_skipped = 0
-	for fn in files:
-		display_progress(
-			(10000 * num_files_processed / num_files) / 100.0,
-			"{:7.2f}% of files processed",
+		logger.info("Hashing files.")
+
+		num_files = len(files_input)
+		num_files_processed = 0
+		num_files_skipped = 0
+		for fn in files_input:
+			display_progress(
+				(10000 * num_files_processed / num_files) / 100.0,
+				"{:7.2f}% of files processed",
+			)
+			f_info_path = await get_file_info_path(opts.output_path, fn)
+			if not os.path.exists(f_info_path):
+				f_info = await file_info(os.path.join(opts.input_path, fn))
+				await write_json_file(f_info_path, f_info)
+			else:
+				num_files_skipped += 1
+			num_files_processed += 1
+		display(None)
+		logger.info("%s files processed of which %s skipped.",
+			"{:,}".format(num_files_processed),
+			"{:,}".format(num_files_skipped),
 		)
-		fn_hash = await file_name_hash(fn)
-		f_info_path = os.path.join(opts.output_path, "files", fn_hash + ".json")
-		if not os.path.exists(f_info_path):
-			f_info = await file_info(os.path.join(opts.input_path, fn))
-			await write_json_file(f_info_path, f_info)
-		else:
-			num_files_skipped += 1
-		num_files_processed += 1
-	display(None)
-	logger.info("%s files processed of which %s skipped.",
-		"{:,}".format(num_files_processed),
-		"{:,}".format(num_files_skipped),
-	)
+	else:
+		files_snapshot = await load_files_list(opts.output_path)
+		files_snapshot = set(files_snapshot)
+		files_input = set(files_input)
+		num_files = len(files_snapshot)
+		num_files_processed = 0
+		while files_snapshot:
+			display_progress(
+				(10000 * num_files_processed / num_files) / 100.0,
+				"{:7.2f}% of files processed",
+			)
+			fn_snapshot = files_snapshot.pop()
+			if fn_snapshot in files_input:
+				files_input.remove(fn_snapshot)
+				f_snapshot_info = await load_json_file(await get_file_info_path(opts.output_path, fn_snapshot))
+				f_info = await file_info(os.path.join(opts.input_path, fn_snapshot), hash_algo)
+				if f_snapshot_info != f_info:
+					logger.info("File has changed\n\t%r\n\t\twas %r\n\t\tnow %r", fn_snapshot, f_snapshot_info, f_info)
+			else:
+				logger.info("%r file is missing", fn_snapshot)
+			num_files_processed += 1
+		display(None)
+		if files_input:
+			logger.info("%d new files found", len(files_input))
+
+
+async def get_file_info_path(snapshot_folder, filename):
+	fn_hash = await file_name_hash(filename)
+	return os.path.join(snapshot_folder, "files", fn_hash + ".json")
+
+
+async def load_files_list(snapshot_folder):
+	snapshot_folder = pathlib.Path(snapshot_folder)
+	info_file_path = snapshot_folder / "info.json"
+
+	logger.info("Loading the snapshot info from %r", os.fspath(info_file_path))
+
+	if not snapshot_folder.exists() or not info_file_path.exists():
+		return None
+	info = await load_json_file(info_file_path)
+	files_fileinfo = info.get("files", None)
+	if files_fileinfo is None:
+		return None
+
+	file_list_path = snapshot_folder / "files.json"
+	if files_fileinfo != await file_info(file_list_path, hash_algo):
+		raise ValueError("snapshot dir is corrupted")
+
+	logger.info("Loading file list from %r.", os.fspath(file_list_path))
+	file_list = await load_json_file(file_list_path)
+	logger.info("Loaded %s files.", "{:,}".format(len(file_list)))
+
+	return file_list
+
+
+async def write_files_list(snapshot_folder, file_list):
+	snapshot_folder = pathlib.Path(snapshot_folder)
+	info_file_path = snapshot_folder / "info.json"
+	file_list_path = snapshot_folder / "files.json"
+
+	logger.info("Writing the list of files to %r.", os.fspath(file_list_path))
+	await write_json_file(file_list_path, file_list)
+
+	logger.info("Updating %r", os.fspath(info_file_path))
+	info = await load_json_file(info_file_path)
+	info["files"] = await file_info(file_list_path, hash_algo)
+	await write_json_file(info_file_path, info)
 
 
 async def file_info(fn, hash_name=hash_algo):
@@ -116,6 +172,7 @@ async def load_json_file(path):
 
 
 def traverse(folder):
+	logger.info("Traversing the folder recursively %r.", folder)
 	result = []
 	if not folder.endswith(os.path.sep):
 		folder += os.path.sep
@@ -127,6 +184,9 @@ def traverse(folder):
 			path = path[len(folder):]
 			result.append(path)
 	display(None)
+	logger.info("Sorting the file list.")
+	result.sort()
+	logger.info("Found %s files.", "{:,}".format(len(result)))
 	return result
 
 
@@ -195,11 +255,27 @@ def _parse_args(argv=None):
 		dest="output_path",
 		action="store",
 		metavar="DIR_PATH",
-		type=_ensure_our_folder,
+		type=_ensure_snapshot_folder,
 		required=True,
 		help="",
 	)
+	parser.add_argument(
+		"--update", "-u",
+		dest="update",
+		action="store_true",
+		default=None,
+		help="create or update the snapshot",
+	)
+	parser.add_argument(
+		"--check", "-c",
+		dest="update",
+		action="store_false",
+		default=None,
+		help="check if the snapshot matches input folder",
+	)
 	opts = parser.parse_args((argv[1:] if argv is not None else None))
+	if opts.update is None:
+		parser.error("either --update or --check should be passed")
 	return opts
 
 
@@ -213,7 +289,7 @@ def _ensure_existing_folder(x):
 	return x
 
 
-def _ensure_our_folder(x):
+def _ensure_snapshot_folder(x):
 	info_path = os.path.join(x, "info.json")
 	try:
 		if not os.path.exists(x) or not os.listdir(x):
@@ -227,7 +303,7 @@ def _ensure_our_folder(x):
 				if info["version"] != 1:
 					raise RuntimeError("unsupported version")
 	except Exception as e:
-		msg = "needs a new folder or existing admin folder"
+		msg = "needs an empty or new folder or existing snapshot folder"
 		raise argparse.ArgumentTypeError(msg + " - " + str(e)) from e
 	return x
 
