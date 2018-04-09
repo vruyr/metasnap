@@ -27,13 +27,19 @@ async def main(*, argv=None, loop=None):
 		num_files_skipped = 0
 		for fn in files_input:
 			display_progress(
+				"[{:7.2f}%] {} files processed, of which {} skipped.",
 				(10000 * num_files_processed / num_files) / 100.0,
-				"{:7.2f}% of files processed",
+				num_files_processed,
+				num_files_skipped,
 			)
 			f_info_path = await get_file_info_path(opts.output_path, fn)
 			if not os.path.exists(f_info_path):
-				f_info = await file_info(os.path.join(opts.input_path, fn))
-				await write_json_file(f_info_path, f_info)
+				f_path = os.path.join(opts.input_path, fn)
+				f_info = await file_info(f_path, hash_algo, return_error=True)
+				if f_info.get("error", None):
+					logger.info("Failed to hash file %r - %s", f_path, f_info.get("error"))
+				else:
+					await write_json_file(f_info_path, f_info)
 			else:
 				num_files_skipped += 1
 			num_files_processed += 1
@@ -43,29 +49,56 @@ async def main(*, argv=None, loop=None):
 			"{:,}".format(num_files_skipped),
 		)
 	else:
+		files_matching = []
+		files_changed = {}
+		files_missing = []
+		files_new = []
+
 		files_snapshot = await load_files_list(opts.output_path)
 		files_snapshot = set(files_snapshot)
 		files_input = set(files_input)
 		num_files = len(files_snapshot)
 		num_files_processed = 0
+		progress_report_fmt = "Processed {:,} files of which {:,} were matching, {:,} has changed, {:,} were missing, and {:,} are new."
 		while files_snapshot:
 			display_progress(
+				"[{:7.2f}%] " + progress_report_fmt,
 				(10000 * num_files_processed / num_files) / 100.0,
-				"{:7.2f}% of files processed",
+				num_files_processed,
+				len(files_matching),
+				len(files_changed),
+				len(files_missing),
+				len(files_new)
 			)
 			fn_snapshot = files_snapshot.pop()
 			if fn_snapshot in files_input:
 				files_input.remove(fn_snapshot)
 				f_snapshot_info = await load_json_file(await get_file_info_path(opts.output_path, fn_snapshot))
-				f_info = await file_info(os.path.join(opts.input_path, fn_snapshot), hash_algo)
-				if f_snapshot_info != f_info:
-					logger.info("File has changed\n\t%r\n\t\twas %r\n\t\tnow %r", fn_snapshot, f_snapshot_info, f_info)
+				f_info = await file_info(os.path.join(opts.input_path, fn_snapshot), hash_algo, return_error=True)
+				if f_snapshot_info == f_info:
+					files_matching.append(fn_snapshot)
+				else:
+					files_changed[fn_snapshot] = {
+						"old": f_snapshot_info,
+						"new": f_info
+					}
 			else:
-				logger.info("%r file is missing", fn_snapshot)
+				files_missing.append(fn_snapshot)
 			num_files_processed += 1
 		display(None)
 		if files_input:
-			logger.info("%d new files found", len(files_input))
+			files_new.extend(files_input)
+
+		assert num_files_processed == (
+			len(files_matching) + len(files_changed) + len(files_missing) + len(files_new)
+		)
+		logger.info(progress_report_fmt.format(
+			num_files_processed,
+			len(files_matching),
+			len(files_changed),
+			len(files_missing),
+			len(files_input)
+		))
 
 
 async def get_file_info_path(snapshot_folder, filename):
@@ -87,7 +120,7 @@ async def load_files_list(snapshot_folder):
 		return None
 
 	file_list_path = snapshot_folder / "files.json"
-	if files_fileinfo != await file_info(file_list_path, hash_algo):
+	if files_fileinfo != await file_info(file_list_path, hash_algo, return_error=False):
 		raise ValueError("snapshot dir is corrupted")
 
 	logger.info("Loading file list from %r.", os.fspath(file_list_path))
@@ -107,11 +140,11 @@ async def write_files_list(snapshot_folder, file_list):
 
 	logger.info("Updating %r", os.fspath(info_file_path))
 	info = await load_json_file(info_file_path)
-	info["files"] = await file_info(file_list_path, hash_algo)
+	info["files"] = await file_info(file_list_path, hash_algo, return_error=False)
 	await write_json_file(info_file_path, info)
 
 
-async def file_info(fn, hash_name=hash_algo):
+async def file_info(fn, hash_name=hash_algo, *, return_error=False):
 	if os.path.islink(fn):
 		return {
 			"symlink": os.readlink(fn)
@@ -121,8 +154,13 @@ async def file_info(fn, hash_name=hash_algo):
 			hash_name: await file_content_hash(fn, hash_name)
 		}
 	else:
-		logger.error("Unsupported non-regular file: %r", fn)
-		return None
+		error_message = "unsupported non-regular file"
+		if return_error:
+			return {
+				"error": error_message
+			}
+		else:
+			raise RuntimeError(error_message)
 
 
 async def file_name_hash(fn, hash_name=hash_algo):
@@ -146,8 +184,8 @@ async def file_content_hash(fn, hash_name=hash_algo):
 					should_display_progress = True
 			if should_display_progress:
 				display_progress(
-					(10000 * bytes_done / stat.st_size) / 100.0,
 					"{:7.2f}%% of %r hashed" % fn,
+					(10000 * bytes_done / stat.st_size) / 100.0,
 				)
 			b = fo.read(chunk_size)
 			if not b:
@@ -190,11 +228,8 @@ def traverse(folder):
 	return result
 
 
-display_progress_last = None
-def display_progress(progress, fmt="{}"):
-	if progress == display_progress_last:
-		return
-	display(fmt.format(progress))
+def display_progress(fmt, *args, **kwargs):
+	display(fmt.format(*args, **kwargs))
 
 
 def display(s):
