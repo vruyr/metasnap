@@ -1,0 +1,12 @@
+Usage:
+  softsnapshot --input=DIR_PATH --snapshot=DIR_PATH (--update | --check)
+  softsnapshot --version
+  softsnapshot --help
+
+Options:
+  --help, -h                        Show this help screen and exit.
+  --version                         Show version information and exit.
+  --input=DIR_PATH, -i DIR_PATH     Path to the input folder.
+  --snapshot=DIR_PATH, -s DIR_PATH  Path to the snapshot folder.
+  --update, -u                      Create or update the snapshot for the input folder.
+  --check, -c                       Check if the snapshot matches the input folder.
