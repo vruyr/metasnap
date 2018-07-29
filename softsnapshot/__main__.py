@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import sys, asyncio, logging, logging.config, pathlib, shutil, json
+import sys, asyncio, logging, logging.config, pathlib, shutil, json, zipfile, os
 import docopt
 from .core import SoftSnapshot
 
@@ -38,8 +38,22 @@ async def main(*, args=None, prog=None, loop=None):
 
 
 def load_usage():
-	with (pathlib.Path(__file__).parent / "usage.txt").open("r") as fo:
-		return fo.read()
+	usage_file_encoding = "UTF-8"
+	usage_file = pathlib.Path(__file__).parent / "usage.txt"
+	if usage_file.exists():
+		with usage_file.open("rb") as fo:
+			return fo.read().decode(usage_file_encoding)
+	else:
+		zipfile_path = usage_file
+		while zipfile_path.parts != ():
+			zipfile_path = zipfile_path.parent
+			usage_file_inzip = usage_file.relative_to(zipfile_path)
+			if not zipfile_path.exists():
+				continue
+			with zipfile.ZipFile(zipfile_path) as zf:
+				with zf.open(os.fspath(usage_file_inzip), "r") as fo:
+					return fo.read().decode(usage_file_encoding)
+		raise RuntimeError("Failed to find usage.txt")
 
 
 def display(s):
@@ -89,8 +103,13 @@ def _smain(*, argv=None):
 	loop.run_until_complete(main(args=argv[1:], prog=argv[0], loop=loop))
 
 
-if __name__ == "__main__":
+def _ssmain():
 	try:
 		sys.exit(_smain(argv=sys.argv))
 	except KeyboardInterrupt:
 		print(file=sys.stderr)
+
+
+
+if __name__ == "__main__":
+	_ssmain()
