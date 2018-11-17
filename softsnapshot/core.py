@@ -3,16 +3,24 @@ import os, pathlib, logging, json, hashlib, time
 
 class SoftSnapshot(object):
 	__slots__ = (
+		"_set_status_line",
+		"_status_general",
+		"_status_hash",
 		"_snapshot_path",
 		"_chunk_size",
 		"_log",
 	)
 
-	def __init__(self, snapshot_dir, *, chunk_size=(512 * 2014)):
+	def __init__(self, snapshot_dir, *, status_line_setter=None, chunk_size=(512 * 2014)):
 		self._log = logging.getLogger(__name__)
+		self._set_status_line = status_line_setter
+		if self._set_status_line is None:
+			self._set_status_line = lambda i, s: None
 		self._snapshot_path = self._ensure_snapshot_folder(pathlib.Path(snapshot_dir))
 		assert self._snapshot_path.exists() and self._snapshot_path.is_dir()
 		self._chunk_size = chunk_size
+		self._status_general = None
+		self._status_hash = None
 
 	async def update(self, path, *, hash_algo="sha1"):
 		path = pathlib.Path(path)
@@ -25,12 +33,12 @@ class SoftSnapshot(object):
 		num_files_processed = 0
 		num_files_skipped = 0
 		for fn in files_input:
-			self._display_progress(
-				"[{:7.2f}%] {:,} files processed, of which {:,} skipped.",
+			progress_status = "[{:7.2f}%] {:,} files processed, of which {:,} skipped.".format(
 				(10000 * num_files_processed / num_files) / 100.0,
 				num_files_processed,
 				num_files_skipped,
 			)
+			self._set_status_general(progress_status)
 			f_info_path = await self.get_file_info_path(fn, hash_algo)
 			if not os.path.exists(f_info_path):
 				f_path = path / fn
@@ -42,7 +50,7 @@ class SoftSnapshot(object):
 			else:
 				num_files_skipped += 1
 			num_files_processed += 1
-		self._display(None)
+		self._set_status_general(None)
 		self._log.info("%s files processed of which %s skipped.",
 			"{:,}".format(num_files_processed),
 			"{:,}".format(num_files_skipped),
@@ -63,15 +71,15 @@ class SoftSnapshot(object):
 		num_files_processed = 0
 		progress_report_fmt = "Processed {:,} files of which {:,} were matching, {:,} has changed, {:,} were missing, and {:,} are new."
 		while files_snapshot:
-			self._display_progress(
-				"[{:7.2f}%] " + progress_report_fmt,
+			progress_status = ("[{:7.2f}%] " + progress_report_fmt).format(
 				(10000 * num_files_processed / num_files) / 100.0,
 				num_files_processed,
 				len(files_matching),
 				len(files_changed),
 				len(files_missing),
-				len(files_new)
+				len(files_new),
 			)
+			self._set_status_general(progress_status)
 			fn_snapshot = files_snapshot.pop()
 			if fn_snapshot in files_input:
 				files_input.remove(fn_snapshot)
@@ -91,7 +99,7 @@ class SoftSnapshot(object):
 			else:
 				files_missing.append(fn_snapshot)
 			num_files_processed += 1
-		self._display(None)
+		self._set_status_general(None)
 		if files_input:
 			files_new.extend(files_input)
 
@@ -132,13 +140,13 @@ class SoftSnapshot(object):
 		if not folder.endswith(os.path.sep):
 			folder += os.path.sep
 		for dirpath, dirnames, filenames in os.walk(folder):
-			self._display(dirpath)
+			self._set_status_general(dirpath)
 			for fn in filenames:
 				path = os.path.join(dirpath, fn)
 				assert path.startswith(folder)
 				path = path[len(folder):]
 				result.append(path)
-		self._display(None)
+		self._set_status_general(None)
 		self._log.info("Sorting the file list.")
 		result.sort()
 		self._log.info("Found %s files.", "{:,}".format(len(result)))
@@ -245,26 +253,24 @@ class SoftSnapshot(object):
 					if (time.time() - start_time) > threshold_to_display_progress:
 						should_display_progress = True
 				if should_display_progress:
-					self._display_progress(
-						"{:7.2f}%% of %r hashed" % os.fspath(fn),
+					self._set_status_hash(("[{:7.2f}%] Hashing {!r}").format(
 						(10000 * bytes_done / stat.st_size) / 100.0,
-					)
+						os.fspath(fn),
+					))
 				b = fo.read(self._chunk_size)
 				if not b:
 					break
 				h.update(b)
 				bytes_done += len(b)
-			if should_display_progress:
-				self._display(None)
+			self._set_status_hash(None)
 		return h.hexdigest()
 
-	# TODO Not a good idea
-	display = lambda msg: None
+	def _set_status_general(self, s):
+		self._status_general = self._set_status_line(self._status_general, s)
+		if self._status_hash is not None:
+			self._status_hash = self._set_status_line(self._status_hash, None)
 
-	def _display(self, msg):
-		#TODO Not a good idea
-		self.__class__.display(msg)
-
-	def _display_progress(self, fmt, *args, **kwargs):
-		#TODO Not a good idea
-		self._display(fmt.format(*args, **kwargs))
+	def _set_status_hash(self, s):
+		if s is None and self._status_hash is None:
+			return
+		self._status_hash = self._set_status_line(self._status_hash, s)

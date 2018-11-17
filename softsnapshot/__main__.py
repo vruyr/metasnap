@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import sys, asyncio, logging, logging.config, pathlib, shutil, json, zipfile, os
+import sys, asyncio, logging, logging.config, pathlib, shutil, json, zipfile, os, collections, functools
 import docopt
 from .core import SoftSnapshot
 
@@ -21,9 +21,16 @@ async def main(*, args=None, prog=None, loop=None):
 
 	_configure_logging()
 
-	SoftSnapshot.display = display
+	status_lines = collections.OrderedDict()
+	status_line_setter = functools.partial(set_status_line,
+		status_lines=status_lines,
+		max_width=screen_width,
+		tty_fo=sys.stdout,
+	)
+	#TODO If anything is written to the same tty_fo without clearing the status first - the output will be messed up.
 
-	ss = SoftSnapshot(snapshot_dir)
+	ss = SoftSnapshot(snapshot_dir, status_line_setter=status_line_setter)
+
 	if must_update:
 		await ss.update(input_dir)
 	else:
@@ -35,6 +42,51 @@ async def main(*, args=None, prog=None, loop=None):
 		if new:
 			logger.info("New: %s", json.dumps(list(new), indent="\t"))
 
+
+def set_status_line(status_id, text, *, status_lines, max_width, tty_fo):
+	assert status_id is not None or text is not None
+
+	cursor = len(status_lines)
+
+	if status_id is None:
+		status_id = object()
+		status_lines[status_id] = ""
+
+	status_line_ids = list(status_lines.keys())
+	status_id_index = status_line_ids.index(status_id)
+	num_lines_back = cursor - status_id_index
+	assert num_lines_back >= 0
+
+	control = ""
+
+	if num_lines_back:
+		control += f"\x1b[{num_lines_back}F"
+
+	if text is not None:
+		status_lines[status_id] = text
+		show_begin = status_id_index
+		show_end = status_id_index + 1
+		num_lines_forward = num_lines_back - 1
+	else:
+		show_begin = status_id_index + 1
+		show_end = len(status_line_ids)
+		num_lines_forward = 0
+		del status_lines[status_id]
+		status_id = None
+
+	for i in status_line_ids[show_begin:show_end]:
+		text = status_lines[i]
+		text = text[-1 * (max_width - 1):].ljust(max_width)
+		control += f"{text}\x1b[0K\n"
+	if num_lines_forward > 0:
+		control += f"\x1b[{num_lines_forward}E"
+
+	control += "\x1b[0K"
+
+	tty_fo.write(control)
+	tty_fo.flush()
+
+	return status_id
 
 
 def load_usage():
@@ -54,16 +106,6 @@ def load_usage():
 				with zf.open(os.fspath(usage_file_inzip), "r") as fo:
 					return fo.read().decode(usage_file_encoding)
 		raise RuntimeError("Failed to find usage.txt")
-
-
-def display(s):
-	if s is not None:
-		s = s[-1 * (screen_width - 1):].ljust(screen_width) + "\r"
-	else:
-		s = "\r" + " " * screen_width + "\r"
-
-	sys.stdout.write(s)
-	sys.stdout.flush()
 
 
 def _configure_logging():
