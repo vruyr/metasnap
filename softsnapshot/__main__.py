@@ -16,7 +16,9 @@ async def main(*, args=None, prog=None, loop=None):
 	must_update = opts.pop("--update")
 	input_dir = pathlib.Path(opts.pop("--input")).resolve()
 	snapshot_dir = pathlib.Path(opts.pop("--snapshot")).resolve()
-	assert opts.pop("--check") is not must_update
+	report_file_path = opts.pop("--check")
+	if must_update:
+		assert report_file_path is None
 	assert not opts, opts
 
 	_configure_logging()
@@ -35,12 +37,24 @@ async def main(*, args=None, prog=None, loop=None):
 		await ss.update(input_dir)
 	else:
 		changed, missing, new = await ss.check(input_dir)
-		if changed:
-			logger.info("Changed: %s", json.dumps(changed, indent="\t"))
-		if missing:
-			logger.info("Missing: %s", json.dumps(missing, indent="\t"))
-		if new:
-			logger.info("New: %s", json.dumps(list(new), indent="\t"))
+
+		if report_file_path == "-":
+			write_report(sys.stdout, changed, missing, new)
+		else:
+			with open(report_file_path, "w") as fo:
+				write_report(fo, changed, missing, new)
+
+
+def write_report(fo, changed, missing, new):
+	report = {}
+	if changed:
+		report["changed"] = sorted(changed)
+	if missing:
+		report["missing"] = sorted(missing)
+	if new:
+		report["new"] = sorted(new)
+	json.dump(report, fo, indent="\t")
+	fo.write("\n")
 
 
 def set_status_line(status_id, text, *, status_lines, max_width, tty_fo):
