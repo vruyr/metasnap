@@ -17,7 +17,6 @@ class SoftSnapshot(object):
 		if self._set_status_line is None:
 			self._set_status_line = lambda i, s: None
 		self._snapshot_path = self._ensure_snapshot_folder(pathlib.Path(snapshot_dir))
-		assert self._snapshot_path.exists() and self._snapshot_path.is_dir()
 		self._chunk_size = chunk_size
 		self._status_general = None
 		self._status_hash = None
@@ -25,8 +24,10 @@ class SoftSnapshot(object):
 	async def update(self, path, *, hash_algo="sha1"):
 		path = pathlib.Path(path)
 		files_input = self._traverse(path)
+
+		self._log.info("Writing file list metadata.")
 		await self.write_snapshot_meta(files_input, hash_algo, hash_algo)
-		os.makedirs(self._snapshot_path / "files", exist_ok=True)
+
 		self._log.info("Hashing files.")
 
 		num_files = len(files_input)
@@ -46,7 +47,7 @@ class SoftSnapshot(object):
 				if f_info.get("error", None):
 					self._log.info("Failed to hash file %r - %s", os.fspath(f_path), f_info.get("error"))
 				else:
-					await self.write_json_file(f_info_path, f_info)
+					self.write_json_file(f_info_path, f_info)
 			else:
 				num_files_skipped += 1
 			num_files_processed += 1
@@ -85,7 +86,7 @@ class SoftSnapshot(object):
 				files_input.remove(fn_snapshot)
 				f_snapshot_info_path = await self.get_file_info_path(fn_snapshot, filename_hash_algo)
 				if f_snapshot_info_path.exists():
-					f_snapshot_info = await self.load_json_file(f_snapshot_info_path)
+					f_snapshot_info = self.read_json_file(f_snapshot_info_path)
 				else:
 					f_snapshot_info = {"error": "metadata not in snapshot"}
 				f_info = await self.file_info_similar(path / fn_snapshot, f_snapshot_info)
@@ -113,24 +114,22 @@ class SoftSnapshot(object):
 		))
 		return (files_changed, files_missing, files_new)
 
-	@staticmethod
-	def _ensure_snapshot_folder(path):
+	def _ensure_snapshot_folder(self, path):
 		path = pathlib.Path(path)
 		info_path = path / "info.json"
 		try:
 			if not os.path.exists(path) or not os.listdir(path):
 				os.makedirs(path, exist_ok=True)
-				with open(info_path, "w") as fo:
-					json.dump({"version": 1}, fo, indent="\t")
-					fo.write("\n")
+				self.write_json_file(info_path, {"version": 2})
 			else:
-				with open(info_path, "r") as fo:
-					info = json.load(fo)
-					if info["version"] != 1:
-						raise RuntimeError("unsupported version")
+				info = self.read_json_file(info_path)
+				if info["version"] != 2:
+					raise RuntimeError("unsupported version")
 		except Exception as e:
 			msg = "needs an empty or new folder or existing snapshot folder"
 			raise ValueError(msg + " - " + str(e)) from e
+
+		assert path.exists() and path.is_dir()
 		return path
 
 	def _traverse(self, folder):
@@ -160,7 +159,7 @@ class SoftSnapshot(object):
 		if not self._snapshot_path.exists() or not info_file_path.exists():
 			return None
 
-		info = await self.load_json_file(info_file_path)
+		info = self.read_json_file(info_file_path)
 		files_meta = info.get("files", None)
 		if files_meta is None:
 			return None
@@ -171,7 +170,7 @@ class SoftSnapshot(object):
 		filename_hash_algo = files_meta["name_hash_algo"]
 
 		self._log.info("Loading file list from %r.", os.fspath(file_list_path))
-		file_list = await self.load_json_file(file_list_path)
+		file_list = self.read_json_file(file_list_path)
 		self._log.info("Loaded %s files.", "{:,}".format(len(file_list)))
 
 		return (file_list, filename_hash_algo)
@@ -181,29 +180,33 @@ class SoftSnapshot(object):
 		file_list_path = info_file_path.parent / "files.json"
 
 		self._log.info("Writing the list of files to %r.", os.fspath(file_list_path))
-		await self.write_json_file(file_list_path, file_list)
+		self.write_json_file(file_list_path, file_list)
 
 		self._log.info("Updating %r", os.fspath(info_file_path))
-		info = await self.load_json_file(info_file_path)
+		info = self.read_json_file(info_file_path)
 		info["files"] = {
 			"path": os.fspath(file_list_path.relative_to(info_file_path.parent)),
 			"name_hash_algo": filename_hash_algo,
 			"content": await self.file_info(file_list_path, content_hash_algo, return_error=False),
 		}
-		await self.write_json_file(info_file_path, info)
+		self.write_json_file(info_file_path, info)
 
-	async def load_json_file(self, path):
+	def read_json_file(self, path):
 		with open(path, "r") as fo:
 			return json.load(fo)
 
-	async def write_json_file(self, path, data):
+	def write_json_file(self, path, data):
 		with open(path, "w") as fo:
 			json.dump(data, fo, indent="\t")
 			fo.write("\n")
 
 	async def get_file_info_path(self, filename, filename_hash_algo):
 		fn_hash = await self.file_name_hash(filename, filename_hash_algo)
-		return self._snapshot_path / "files" / (fn_hash + ".json")
+		fn_hash_part_1 = fn_hash[:2]
+		fn_hash_part_2 = fn_hash[2:]
+		result = self._snapshot_path / "files" / fn_hash_part_1 / (fn_hash_part_2 + ".json")
+		os.makedirs(result.parent, exist_ok=True)
+		return result
 
 	@staticmethod
 	async def file_name_hash(fn, hash_name):
