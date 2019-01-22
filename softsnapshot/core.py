@@ -1,4 +1,4 @@
-import os, pathlib, logging, json, hashlib, time
+import os, pathlib, logging, json, hashlib, time, stat
 
 
 class SoftSnapshot(object):
@@ -7,6 +7,7 @@ class SoftSnapshot(object):
 		"_status_general",
 		"_status_hash",
 		"_snapshot_path",
+		"_meta_extractors_always",
 		"_chunk_size",
 		"_log",
 	)
@@ -20,13 +21,21 @@ class SoftSnapshot(object):
 		self._chunk_size = chunk_size
 		self._status_general = None
 		self._status_hash = None
+		self._meta_extractors_always = ("st_mode", "st_size")
 
-	async def update(self, path, *, hash_algo="sha1"):
+	async def update(self, path, *, filename_hash_algo="sha1", filename_list_hash_algo="sha1", meta_extractors):
+		meta_extractors = set([*self._meta_extractors_always, *(meta_extractors or [])])
+		self._log.info("Updating %r of %r in %r snapshot", meta_extractors, os.fspath(path) , os.fspath(self._snapshot_path))
+
 		path = pathlib.Path(path)
 		files_input = self._traverse(path)
 
 		self._log.info("Writing file list metadata.")
-		await self.write_snapshot_meta(files_input, hash_algo, hash_algo)
+		await self.write_snapshot_meta(
+			files_input,
+			filename_hash_algo=filename_hash_algo,
+			filename_list_hash_algo=filename_list_hash_algo
+		)
 
 		self._log.info("Hashing files.")
 
@@ -40,10 +49,10 @@ class SoftSnapshot(object):
 				num_files_skipped,
 			)
 			self._set_status_general(progress_status)
-			f_info_path = await self.get_file_info_path(fn, hash_algo)
+			f_info_path = await self.get_file_info_path(filename=fn, filename_hash_algo=filename_hash_algo)
 			if not os.path.exists(f_info_path):
 				f_path = path / fn
-				f_info = await self.file_info(f_path, hash_algo, return_error=True)
+				f_info = await self.file_info(f_path, meta_extractors=meta_extractors, return_error=True)
 				if f_info.get("error", None):
 					self._log.info("Failed to hash file %r - %s", os.fspath(f_path), f_info.get("error"))
 				else:
@@ -57,10 +66,12 @@ class SoftSnapshot(object):
 			"{:,}".format(num_files_skipped),
 		)
 
-	async def check(self, path):
+	async def check(self, path, *, meta_extractors):
+		self._log.info("Checking %r of %r against %r limiting", meta_extractors, os.fspath(path), os.fspath(self._snapshot_path))
+
 		path = pathlib.Path(path)
 
-		files_matching = []
+		files_matching = {}
 		files_changed = {}
 		files_missing = []
 		files_new = []
@@ -84,14 +95,23 @@ class SoftSnapshot(object):
 			fn_snapshot = files_snapshot.pop()
 			if fn_snapshot in files_input:
 				files_input.remove(fn_snapshot)
-				f_snapshot_info_path = await self.get_file_info_path(fn_snapshot, filename_hash_algo)
+				f_snapshot_info_path = await self.get_file_info_path(filename=fn_snapshot, filename_hash_algo=filename_hash_algo)
 				if f_snapshot_info_path.exists():
 					f_snapshot_info = self.read_json_file(f_snapshot_info_path)
 				else:
 					f_snapshot_info = {"error": "metadata not in snapshot"}
-				f_info = await self.file_info_similar(path / fn_snapshot, f_snapshot_info)
-				if f_snapshot_info == f_info:
-					files_matching.append(fn_snapshot)
+
+				f_info = await self.file_info(
+					path / fn_snapshot,
+					meta_extractors=set([
+						*self._meta_extractors_always,
+						*(meta_extractors or f_snapshot_info.keys())
+					]),
+					return_error=True,
+				)
+				f_snapshot_info = {k: v for k, v in f_snapshot_info.items() if k == "error" or k in f_info}
+				if f_info == f_snapshot_info:
+					files_matching[fn_snapshot] = sorted(f_info.keys())
 				else:
 					files_changed[fn_snapshot] = {
 						"old": f_snapshot_info,
@@ -112,7 +132,7 @@ class SoftSnapshot(object):
 			len(files_missing),
 			len(files_new)
 		))
-		return (files_changed, files_missing, files_new)
+		return (files_matching, files_changed, files_missing, files_new)
 
 	def _ensure_snapshot_folder(self, path):
 		path = pathlib.Path(path)
@@ -120,10 +140,10 @@ class SoftSnapshot(object):
 		try:
 			if not os.path.exists(path) or not os.listdir(path):
 				os.makedirs(path, exist_ok=True)
-				self.write_json_file(info_path, {"version": 2})
+				self.write_json_file(info_path, {"version": 3})
 			else:
 				info = self.read_json_file(info_path)
-				if info["version"] != 2:
+				if info["version"] != 3:
 					raise RuntimeError("unsupported version")
 		except Exception as e:
 			msg = "needs an empty or new folder or existing snapshot folder"
@@ -165,7 +185,7 @@ class SoftSnapshot(object):
 			return None
 		file_list_path = info_file_path.parent / files_meta["path"]
 		files_fileinfo = files_meta["content"]
-		if not await self.validate_fileinfo(file_list_path, files_fileinfo):
+		if files_fileinfo != await self.file_info(file_list_path, meta_extractors=list(files_fileinfo.keys())):
 			raise ValueError("snapshot dir is corrupted")
 		filename_hash_algo = files_meta["name_hash_algo"]
 
@@ -175,7 +195,7 @@ class SoftSnapshot(object):
 
 		return (file_list, filename_hash_algo)
 
-	async def write_snapshot_meta(self, file_list, filename_hash_algo, content_hash_algo):
+	async def write_snapshot_meta(self, file_list, *, filename_hash_algo, filename_list_hash_algo):
 		info_file_path = self._snapshot_path / "info.json"
 		file_list_path = info_file_path.parent / "files.json"
 
@@ -187,7 +207,7 @@ class SoftSnapshot(object):
 		info["files"] = {
 			"path": os.fspath(file_list_path.relative_to(info_file_path.parent)),
 			"name_hash_algo": filename_hash_algo,
-			"content": await self.file_info(file_list_path, content_hash_algo, return_error=False),
+			"content": await self.file_info(file_list_path, meta_extractors=[filename_list_hash_algo], return_error=False),
 		}
 		self.write_json_file(info_file_path, info)
 
@@ -200,7 +220,7 @@ class SoftSnapshot(object):
 			json.dump(data, fo, indent="\t")
 			fo.write("\n")
 
-	async def get_file_info_path(self, filename, filename_hash_algo):
+	async def get_file_info_path(self, *, filename, filename_hash_algo):
 		fn_hash = await self.file_name_hash(filename, filename_hash_algo)
 		fn_hash_part_1 = fn_hash[:2]
 		fn_hash_part_2 = fn_hash[2:]
@@ -209,23 +229,32 @@ class SoftSnapshot(object):
 		return result
 
 	@staticmethod
-	async def file_name_hash(fn, hash_name):
+	async def file_name_hash(fn, hash_algo_name):
 		assert type(fn) is str
-		h = hashlib.new(hash_name)
+		h = hashlib.new(hash_algo_name)
 		h.update(fn.encode("utf-8"))
 		return h.hexdigest()
 
-	async def file_info(self, fn, hash_name, *, return_error=False):
-		if os.path.islink(fn):
-			return {
-				"symlink": os.readlink(fn)
-			}
-		elif os.path.isfile(fn):
-			return {
-				hash_name: await self.file_content_hash(fn, hash_name)
-			}
+	async def file_info(self, fn, *, meta_extractors, return_error=False):
+		assert meta_extractors, meta_extractors
+		lstat = os.stat(fn, follow_symlinks=False)
+		file_mode_type = stat.S_IFMT(lstat.st_mode)
+
+		if file_mode_type in (stat.S_IFREG, stat.S_IFLNK):
+			result = {}
+			for meta_extractor in meta_extractors:
+				if meta_extractor == "none":
+					pass
+				elif meta_extractor in ("st_mode", "st_size", "st_ctime", "st_ctime_ns", "st_mtime", "st_mtime_ns"):
+					result[meta_extractor] = getattr(lstat, meta_extractor)
+				else:
+					if file_mode_type == stat.S_IFLNK:
+						result[meta_extractor] = await self.string_hash(os.readlink(fn), meta_extractor)
+					else:
+						result[meta_extractor] = await self.file_content_hash(fn, meta_extractor)
+			return result
 		else:
-			error_message = "unsupported non-regular file"
+			error_message = f"unsupported file type {oct(lstat.st_mode)}"
 			if return_error:
 				return {
 					"error": error_message
@@ -233,22 +262,12 @@ class SoftSnapshot(object):
 			else:
 				raise RuntimeError(error_message)
 
-	async def file_info_similar(self, path, fileinfo):
-		keys = list(fileinfo.keys())
-		if len(keys) != 1:
-			#TODO redesign the validation logic
-			raise ValueError("unexpected fileinfo")
-		return await self.file_info(path, keys[0], return_error=True)
-
-	async def validate_fileinfo(self, path, fileinfo):
-		return fileinfo == await self.file_info_similar(path, fileinfo)
-
-	async def file_content_hash(self, fn, hash_name):
+	async def file_content_hash(self, fn, hash_algo_name):
 		threshold_to_display_progress = 2
 		should_display_progress = None
 		start_time = time.time()
 		stat = os.stat(fn)
-		h = hashlib.new(hash_name)
+		h = hashlib.new(hash_algo_name)
 		with open(fn, "rb") as fo:
 			bytes_done = 0
 			while True:
@@ -266,6 +285,11 @@ class SoftSnapshot(object):
 				h.update(b)
 				bytes_done += len(b)
 			self._set_status_hash(None)
+		return h.hexdigest()
+
+	async def string_hash(self, s, hash_algo_name):
+		h = hashlib.new(hash_algo_name)
+		h.update(s.encode("utf-8")) #TODO Make sure that this is a stable encoding - what does git do with filenames?
 		return h.hexdigest()
 
 	def _set_status_general(self, s):

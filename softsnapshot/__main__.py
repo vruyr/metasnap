@@ -16,6 +16,8 @@ async def main(*, args=None, prog=None, loop=None):
 	must_update = opts.pop("--update")
 	input_dir = pathlib.Path(opts.pop("--input")).resolve()
 	snapshot_dir = pathlib.Path(opts.pop("--snapshot")).resolve()
+	meta_extractors = opts.pop("--extractor")
+
 	report_file_path = opts.pop("--check")
 	if must_update:
 		assert report_file_path is None
@@ -34,21 +36,23 @@ async def main(*, args=None, prog=None, loop=None):
 	ss = SoftSnapshot(snapshot_dir, status_line_setter=status_line_setter)
 
 	if must_update:
-		await ss.update(input_dir)
+		await ss.update(input_dir, meta_extractors=meta_extractors)
 	else:
-		changed, missing, new = await ss.check(input_dir)
+		matching, changed, missing, new = await ss.check(input_dir, meta_extractors=meta_extractors)
 
 		if report_file_path == "-":
-			write_report(sys.stdout, changed, missing, new)
+			write_report(sys.stdout, matching, changed, missing, new)
 		else:
 			with open(report_file_path, "w") as fo:
-				write_report(fo, changed, missing, new)
+				write_report(fo, matching, changed, missing, new)
 
 
-def write_report(fo, changed, missing, new):
+def write_report(fo, matching, changed, missing, new, *, report_matching=False):
 	report = {}
+	if report_matching and matching:
+		report["matching"] = matching
 	if changed:
-		report["changed"] = sorted(changed)
+		report["changed"] = changed
 	if missing:
 		report["missing"] = sorted(missing)
 	if new:

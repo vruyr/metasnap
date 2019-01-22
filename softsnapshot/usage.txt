@@ -1,5 +1,7 @@
 Usage:
-  softsnapshot --input=DIR_PATH --snapshot=DIR_PATH (--update | --check=REPORT_FILE_PATH)
+  softsnapshot --input=DIR_PATH --snapshot=DIR_PATH
+               [--extractor=NAME]...
+               (--update | --check=REPORT_FILE_PATH)
   softsnapshot --version
   softsnapshot --help
 
@@ -12,3 +14,5 @@ Options:
   --check, -c REPORT_FILE_PATH  Check if the snapshot matches the input folder. Results of the
                                 check will be written to the file specified by REPORT_FILE_PATH or
                                 (stdout if it is '-').
+  --extractor, -e NAME          Name of the metadata extractor to include. By default all available
+                                extractors are available. A special "none" extractor does nothing.
