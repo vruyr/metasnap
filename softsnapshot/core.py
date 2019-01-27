@@ -7,10 +7,32 @@ class SoftSnapshot(object):
 		"_status_general",
 		"_status_hash",
 		"_snapshot_path",
-		"_meta_extractors_always",
 		"_chunk_size",
 		"_log",
 	)
+
+	EXTRACTORS_SUPPORTED_NOOP = {"none"}
+	EXTRACTORS_SUPPORTED_STAT = {"st_mode", "st_size", "st_ctime", "st_ctime_ns", "st_mtime", "st_mtime_ns"}
+	EXTRACTORS_SUPPORTED_HASH = set(hashlib.algorithms_guaranteed)
+	EXTRACTORS_ALWAYS         = ("st_mode", "st_size")
+
+	@classmethod
+	def all_supported_extractors(cls):
+		return (
+			list(cls.EXTRACTORS_SUPPORTED_NOOP) +
+			list(cls.EXTRACTORS_SUPPORTED_STAT) +
+			list(cls.EXTRACTORS_SUPPORTED_HASH)
+		)
+
+	@classmethod
+	def is_supported_extractor(cls, name):
+		if name in cls.EXTRACTORS_SUPPORTED_NOOP:
+			return True
+		if name in cls.EXTRACTORS_SUPPORTED_STAT:
+			return True
+		if name in cls.EXTRACTORS_SUPPORTED_HASH:
+			return True
+		return False
 
 	def __init__(self, snapshot_dir, *, status_line_setter=None, chunk_size=(512 * 2014)):
 		self._log = logging.getLogger(__name__)
@@ -21,10 +43,9 @@ class SoftSnapshot(object):
 		self._chunk_size = chunk_size
 		self._status_general = None
 		self._status_hash = None
-		self._meta_extractors_always = ("st_mode", "st_size")
 
 	async def update(self, path, *, filename_hash_algo="sha1", filename_list_hash_algo="sha1", meta_extractors):
-		meta_extractors = set([*self._meta_extractors_always, *(meta_extractors or [])])
+		meta_extractors = set([*self.EXTRACTORS_ALWAYS, *(meta_extractors or [])])
 		self._log.info("Updating %r of %r in %r snapshot", meta_extractors, os.fspath(path) , os.fspath(self._snapshot_path))
 
 		path = pathlib.Path(path)
@@ -104,7 +125,7 @@ class SoftSnapshot(object):
 				f_info = await self.file_info(
 					path / fn_snapshot,
 					meta_extractors=set([
-						*self._meta_extractors_always,
+						*self.EXTRACTORS_ALWAYS,
 						*(meta_extractors or f_snapshot_info.keys())
 					]),
 					return_error=True,
@@ -243,18 +264,20 @@ class SoftSnapshot(object):
 		if file_mode_type in (stat.S_IFREG, stat.S_IFLNK):
 			result = {}
 			for meta_extractor in meta_extractors:
-				if meta_extractor == "none":
+				if meta_extractor in self.EXTRACTORS_SUPPORTED_NOOP:
 					pass
-				elif meta_extractor in ("st_mode", "st_size", "st_ctime", "st_ctime_ns", "st_mtime", "st_mtime_ns"):
+				elif meta_extractor in self.EXTRACTORS_SUPPORTED_STAT:
 					result[meta_extractor] = getattr(lstat, meta_extractor)
-				else:
+				elif meta_extractor in self.EXTRACTORS_SUPPORTED_HASH:
 					if file_mode_type == stat.S_IFLNK:
 						result[meta_extractor] = await self.string_hash(os.readlink(fn), meta_extractor)
 					else:
 						result[meta_extractor] = await self.file_content_hash(fn, meta_extractor)
+				else:
+					raise ValueError(f"Unsupported meta extractor {meta_extractor!r}")
 			return result
 		else:
-			error_message = f"unsupported file type {oct(lstat.st_mode)}"
+			error_message = f"Unsupported file type {oct(lstat.st_mode)}"
 			if return_error:
 				return {
 					"error": error_message

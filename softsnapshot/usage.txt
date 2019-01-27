@@ -14,5 +14,10 @@ Options:
   --check, -c REPORT_FILE_PATH  Check if the snapshot matches the input folder. Results of the
                                 check will be written to the file specified by REPORT_FILE_PATH or
                                 (stdout if it is '-').
-  --extractor, -e NAME          Name of the metadata extractor to include. By default all available
-                                extractors are available. A special "none" extractor does nothing.
+  --extractor, -e NAME          Name of a metadata extractor to include.
+
+Always Included Extractors:
+  {list_of_always_included_extractors}
+
+Supported Extractors:
+  {list_of_extractors}

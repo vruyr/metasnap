@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import sys, asyncio, logging, logging.config, pathlib, shutil, json, zipfile, os, collections, functools
+import sys, asyncio, logging, logging.config, pathlib, shutil, json, zipfile, os, collections, functools, textwrap
 import docopt
 from .core import SoftSnapshot
 
@@ -10,7 +10,16 @@ screen_width = shutil.get_terminal_size((None, None)).columns
 
 
 async def main(*, args=None, prog=None, loop=None):
-	opts = docopt.docopt(load_usage(), argv=args, options_first=False, help=True, version="0.0.0")
+	opts = docopt.docopt(
+		load_usage(
+			list_of_always_included_extractors=SoftSnapshot.EXTRACTORS_ALWAYS,
+			list_of_extractors=SoftSnapshot.all_supported_extractors(),
+		),
+		argv=args,
+		options_first=False,
+		help=True,
+		version="0.0.0"
+	)
 	assert opts.pop("--help") is False
 	assert opts.pop("--version") is False
 	must_update = opts.pop("--update")
@@ -107,12 +116,13 @@ def set_status_line(status_id, text, *, status_lines, max_width, tty_fo):
 	return status_id
 
 
-def load_usage():
+def load_usage(*, width=70, list_of_always_included_extractors, list_of_extractors):
 	usage_file_encoding = "UTF-8"
 	usage_file = pathlib.Path(__file__).parent / "usage.txt"
+	result = None
 	if usage_file.exists():
 		with usage_file.open("rb") as fo:
-			return fo.read().decode(usage_file_encoding)
+			result = fo.read().decode(usage_file_encoding)
 	else:
 		zipfile_path = usage_file
 		while zipfile_path.parts != ():
@@ -122,8 +132,22 @@ def load_usage():
 				continue
 			with zipfile.ZipFile(zipfile_path) as zf:
 				with zf.open(os.fspath(usage_file_inzip), "r") as fo:
-					return fo.read().decode(usage_file_encoding)
-		raise RuntimeError("Failed to find usage.txt")
+					result = fo.read().decode(usage_file_encoding)
+					break
+		else:
+			raise RuntimeError("Failed to find usage.txt")
+
+	def format_list(l):
+		#TODO Do not assume usage text is indented with two spaces.
+		return "\n  ".join(textwrap.wrap(
+			", ".join(l),
+			width=width,
+		))
+
+	return result.format(
+		list_of_always_included_extractors=format_list(list_of_always_included_extractors),
+		list_of_extractors=format_list(list_of_extractors),
+	)
 
 
 def _configure_logging():
