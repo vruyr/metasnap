@@ -88,7 +88,7 @@ class SoftSnapshot(object):
 		)
 
 	async def check(self, path, *, meta_extractors):
-		self._log.info("Checking %r of %r against %r limiting", meta_extractors, os.fspath(path), os.fspath(self._snapshot_path))
+		self._log.info("Checking %r of %r against %r", meta_extractors, os.fspath(path), os.fspath(self._snapshot_path))
 
 		path = pathlib.Path(path)
 
