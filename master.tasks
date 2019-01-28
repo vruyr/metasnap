@@ -1,0 +1,7 @@
+Inbox:
+	☐	Change the storage format to be an sqlite3 database for better performance. @created(2019-01-27T18:59:07-0500)
+	☐	Implement ETA prediction based on number of files processed/total if only stat meta is captured and number of bytes read/total if hash sums are also calculated. @created(2019-01-27T19:03:54-0500)
+	☐	Get rid of the --compare option and implement snapshot comparison instead. The workflow should be to capture a new snapshot and compare two snapshots. @created(2019-01-27T19:03:54-0500)
+	☐	Implement a way for the user to specify what metadata should be recalculated based on changes on other metadata. For example if st_mode, st_size, or st_mtime_ns has changed the sha1 should be recalculated. This will result in partial snapshots which rely on previous snapshots to complete them. @created(2019-01-27T19:03:54-0500)
+	☐	Come up with a better name to the term "extractor". @created(2019-01-27T19:06:17-0500)
+	☐	Consider renaming "softsnapshot" to "metasnap". @created(2019-01-27T19:06:45-0500)
