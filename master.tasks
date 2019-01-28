@@ -5,3 +5,4 @@ Inbox:
 	☐	Implement a way for the user to specify what metadata should be recalculated based on changes on other metadata. For example if st_mode, st_size, or st_mtime_ns has changed the sha1 should be recalculated. This will result in partial snapshots which rely on previous snapshots to complete them. @created(2019-01-27T19:03:54-0500)
 	☐	Come up with a better name to the term "extractor". @created(2019-01-27T19:06:17-0500)
 	☐	Consider renaming "softsnapshot" to "metasnap". @created(2019-01-27T19:06:45-0500)
+	☐	Implement filesystem monitoring as a mechanism to make sure nothing is changed since the start of snapshot calculated until the end of it. @created(2019-01-27T19:34:31-0500)
