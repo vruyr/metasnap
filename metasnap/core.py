@@ -1,7 +1,7 @@
 import os, pathlib, logging, json, hashlib, time, stat
 
 
-class SoftSnapshot(object):
+class Metasnap(object):
 	__slots__ = (
 		"_set_status_line",
 		"_status_general",

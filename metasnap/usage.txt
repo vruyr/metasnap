@@ -1,9 +1,9 @@
 Usage:
-  softsnapshot --input=DIR_PATH --snapshot=DIR_PATH
+  metasnap --input=DIR_PATH --snapshot=DIR_PATH
                [--extractor=NAME]...
                (--update | --check=REPORT_FILE_PATH)
-  softsnapshot --version
-  softsnapshot --help
+  metasnap --version
+  metasnap --help
 
 Options:
   --help, -h                    Show this help screen and exit.

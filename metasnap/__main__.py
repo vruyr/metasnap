@@ -2,7 +2,7 @@
 
 import sys, asyncio, logging, logging.config, pathlib, shutil, json, zipfile, os, collections, functools, textwrap
 import docopt
-from .core import SoftSnapshot
+from .core import Metasnap
 
 
 logger = None
@@ -12,8 +12,8 @@ screen_width = shutil.get_terminal_size((None, None)).columns
 async def main(*, args=None, prog=None, loop=None):
 	opts = docopt.docopt(
 		load_usage(
-			list_of_always_included_extractors=SoftSnapshot.EXTRACTORS_ALWAYS,
-			list_of_extractors=SoftSnapshot.all_supported_extractors(),
+			list_of_always_included_extractors=Metasnap.EXTRACTORS_ALWAYS,
+			list_of_extractors=Metasnap.all_supported_extractors(),
 		),
 		argv=args,
 		options_first=False,
@@ -42,7 +42,7 @@ async def main(*, args=None, prog=None, loop=None):
 	)
 	#TODO If anything is written to the same tty_fo without clearing the status first - the output will be messed up.
 
-	ss = SoftSnapshot(snapshot_dir, status_line_setter=status_line_setter)
+	ss = Metasnap(snapshot_dir, status_line_setter=status_line_setter)
 
 	if must_update:
 		await ss.update(input_dir, meta_extractors=meta_extractors)

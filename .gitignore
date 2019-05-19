@@ -2,5 +2,5 @@
 __pycache__/
 .DS_Store
 /.idea/
-/softsnapshot.egg-info/
+/metasnap.egg-info/
 #}}}
