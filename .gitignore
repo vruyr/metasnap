@@ -1,6 +1,9 @@
+#{{{ Transient
+.DS_Store
+#}}}
+
 #{{{ Cache
 __pycache__/
-.DS_Store
 /.idea/
 /metasnap.egg-info/
 #}}}
