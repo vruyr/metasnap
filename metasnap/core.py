@@ -238,7 +238,7 @@ class Metasnap(object):
 
 	def write_json_file(self, path, data):
 		with open(path, "w") as fo:
-			json.dump(data, fo, indent="\t")
+			json.dump(data, fo, sort_keys=True, indent="\t")
 			fo.write("\n")
 
 	async def get_file_info_path(self, *, filename, filename_hash_algo):

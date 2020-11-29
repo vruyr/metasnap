@@ -66,7 +66,7 @@ def write_report(fo, matching, changed, missing, new, *, report_matching=False):
 		report["missing"] = sorted(missing)
 	if new:
 		report["new"] = sorted(new)
-	json.dump(report, fo, indent="\t")
+	json.dump(report, fo, sort_keys=True, indent="\t")
 	fo.write("\n")
 
 
