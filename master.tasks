@@ -9,3 +9,19 @@ Inbox:
 	☐	Implement a way for the user to specify what metadata should be recalculated based on changes on other metadata. For example if st_mode, st_size, or st_mtime_ns has changed the sha1 should be recalculated. This will result in partial snapshots which rely on previous snapshots to complete them. @created(2019-01-27T19:03:54-0500)
 	☐	Come up with a better name to the term "extractor". @created(2019-01-27T19:06:17-0500)
 	☐	Implement filesystem monitoring as a mechanism to make sure nothing is changed since the start of snapshot calculated until the end of it. @created(2019-01-27T19:34:31-0500)
+	☐	Find out how to get the actual file path and its mount point programmatically on Catalina APFS volumes where the system partition is read-only and the read-write data partition is overlaid in the system partition
+		☐	Catalina read-only filesystem issue - Apple Community
+			https://discussions.apple.com/thread/250832097
+		☐	mount - Determine what device a directory is located on - Unix & Linux Stack Exchange
+			https://unix.stackexchange.com/questions/128471/determine-what-device-a-directory-is-located-on
+		☐	stat -f '%Sd %N' /Applications
+		☐	What's New in Apple File Systems - WWDC 2019 - Videos - Apple Developer
+			https://developer.apple.com/videos/play/wwdc2019/710/
+		☐	Yogesh Khatri's forensic blog: macOS 10.15 Volumes & Firmlink magic
+			https://www.swiftforensics.com/2019/10/macos-1015-volumes-firmlink-magic.html
+		☐	Boot volume layout – The Eclectic Light Company
+			https://eclecticlight.co/2020/09/16/boot-volume-layout/
+		☐	APFS, safe saves, inodes and the volfs file system – The Eclectic Light Company
+			https://eclecticlight.co/2019/09/04/apfs-safe-saves-inodes-and-the-volfs-file-system/
+		☐	Finder Aliases and Bookmarks: a summary – The Eclectic Light Company
+			https://eclecticlight.co/2019/01/12/finder-aliases-and-bookmarks-a-summary/
