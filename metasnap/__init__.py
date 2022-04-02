@@ -1,4 +1,4 @@
 import sys
-assert sys.version_info[:2] in [(3, 6), (3, 7), (3, 8), (3, 9)], "Unsupported Python Version"
+assert sys.version_info[0] == 3 and sys.version_info[1] >= 6, sys.version_info
 
 from .core import Metasnap
