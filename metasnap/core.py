@@ -39,7 +39,8 @@ class Metasnap(object):
 		self._set_status_line = status_line_setter
 		if self._set_status_line is None:
 			self._set_status_line = lambda i, s: None
-		self._snapshot_path = self._ensure_snapshot_folder(pathlib.Path(snapshot_dir))
+		self._snapshot_path = None
+		self._snapshot_path = self._ensure_snapshot_folder(pathlib.Path(snapshot_dir).resolve())
 		self._chunk_size = chunk_size
 		self._status_general = None
 		self._status_hash = None
@@ -233,13 +234,19 @@ class Metasnap(object):
 		self.write_json_file(info_file_path, info)
 
 	def read_json_file(self, path):
-		with open(path, "r") as fo:
+		with self.resolve_snapshot_path(path).open("r") as fo:
 			return json.load(fo)
 
 	def write_json_file(self, path, data):
-		with open(path, "w") as fo:
+		with self.resolve_snapshot_path(path).open("w") as fo:
 			json.dump(data, fo, sort_keys=True, indent="\t")
 			fo.write("\n")
+
+	def resolve_snapshot_path(self, path):
+		path = pathlib.Path(path)
+		if path.is_absolute():
+			return path
+		return self._snapshot_path / path
 
 	async def get_file_info_path(self, *, filename, filename_hash_algo):
 		fn_hash = await self.file_name_hash(filename, filename_hash_algo)
