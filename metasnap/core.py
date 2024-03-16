@@ -99,9 +99,8 @@ class Metasnap(object):
 		files_missing = {}
 		files_new = {}
 
-		files_input = set(self._traverse(path))
 		files_snapshot, filename_hash_algo = await self.load_snapshot_meta()
-		files_snapshot = set(files_snapshot)
+		files_input = set(self._traverse(path))
 
 		num_files = len(files_snapshot)
 		num_files_processed = 0
@@ -306,6 +305,8 @@ class Metasnap(object):
 		path = pathlib.Path(path)
 		#TODO Properly implement file and folder filtration by means of ignore files.
 		if path.name in (".fseventsd", ".Spotlight-V100", ".DS_Store"):
+			return True
+		if path.name.startswith("._"):
 			return True
 		return False
 
