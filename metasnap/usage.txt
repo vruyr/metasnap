@@ -1,5 +1,5 @@
 Usage:
-  metasnap --input=DIR_PATH --snapshot=DIR_PATH
+  metasnap [--umask=MODE] --input=DIR_PATH --snapshot=DIR_PATH
                [--extractor=NAME]...
                (--update | --check=REPORT_FILE_PATH)
   metasnap --version
@@ -15,6 +15,10 @@ Options:
                                 check will be written to the file specified by REPORT_FILE_PATH or
                                 (stdout if it is '-').
   --extractor, -e NAME          Name of a metadata extractor to include.
+  --umask MODE                  st_mode = st_mode & ~umask
+                                Similar to umask(2). Bits set are ignored.
+                                Use 0o077 to ignore all permissions for group and other.
+                                Use 0o177 to also ignore the execute bit for the file owner.
 
 Always Included Extractors:
   {list_of_always_included_extractors}

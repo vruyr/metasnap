@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import sys, asyncio, logging, logging.config, pathlib, shutil, json, zipfile, os, collections, functools, textwrap
+import sys, asyncio, logging, logging.config, pathlib, shutil, json, zipfile, os, collections, functools, textwrap, ast
 import docopt
 from .core import Metasnap
 
@@ -25,6 +25,7 @@ async def main(*, args=None, prog=None, loop=None):
 	must_update = opts.pop("--update")
 	input_dir = pathlib.Path(opts.pop("--input")).resolve()
 	snapshot_dir = pathlib.Path(opts.pop("--snapshot")).resolve()
+	st_mode_mask = ast.literal_eval(opts.pop("--umask", None) or "0") & 0o0777
 	meta_extractors = opts.pop("--extractor")
 
 	report_file_path = opts.pop("--check")
@@ -42,30 +43,28 @@ async def main(*, args=None, prog=None, loop=None):
 	)
 	#TODO If anything is written to the same tty_fo without clearing the status first - the output will be messed up.
 
-	ss = Metasnap(snapshot_dir, status_line_setter=status_line_setter)
+	logger.info("Report will be written to %s", repr(report_file_path) if report_file_path != "-" else "stdout")
+
+	ss = Metasnap(snapshot_dir, status_line_setter=status_line_setter, st_mode_mask=st_mode_mask)
 
 	if must_update:
 		await ss.update(input_dir, meta_extractors=meta_extractors)
 	else:
-		matching, changed, missing, new = await ss.check(input_dir, meta_extractors=meta_extractors)
+		changed, missing, new = await ss.check(input_dir, meta_extractors=meta_extractors)
 
 		if report_file_path == "-":
-			write_report(sys.stdout, matching, changed, missing, new)
+			write_report(sys.stdout, changed, missing, new)
 		else:
 			with open(report_file_path, "w") as fo:
-				write_report(fo, matching, changed, missing, new)
+				write_report(fo, changed, missing, new)
 
 
-def write_report(fo, matching, changed, missing, new, *, report_matching=False):
-	report = {}
-	if report_matching and matching:
-		report["matching"] = matching
-	if changed:
-		report["changed"] = changed
-	if missing:
-		report["missing"] = sorted(missing)
-	if new:
-		report["new"] = sorted(new)
+def write_report(fo, changed, missing, new):
+	report = {
+		**changed,
+		**missing,
+		**new,
+	}
 	json.dump(report, fo, sort_keys=True, indent="\t")
 	fo.write("\n")
 

@@ -8,6 +8,7 @@ class Metasnap(object):
 		"_status_hash",
 		"_snapshot_path",
 		"_chunk_size",
+		"_st_mode_mask",
 		"_log",
 	)
 
@@ -34,7 +35,7 @@ class Metasnap(object):
 			return True
 		return False
 
-	def __init__(self, snapshot_dir, *, status_line_setter=None, chunk_size=(512 * 2014)):
+	def __init__(self, snapshot_dir, *, status_line_setter=None, chunk_size=(512 * 2014), st_mode_mask):
 		self._log = logging.getLogger(__name__)
 		self._set_status_line = status_line_setter
 		if self._set_status_line is None:
@@ -44,6 +45,7 @@ class Metasnap(object):
 		self._chunk_size = chunk_size
 		self._status_general = None
 		self._status_hash = None
+		self._st_mode_mask = st_mode_mask
 
 	async def update(self, path, *, filename_hash_algo="sha1", filename_list_hash_algo="sha1", meta_extractors):
 		meta_extractors = set([*self.EXTRACTORS_ALWAYS, *(meta_extractors or [])])
@@ -89,37 +91,44 @@ class Metasnap(object):
 		)
 
 	async def check(self, path, *, meta_extractors):
-		self._log.info("Checking %r of %r against %r", meta_extractors, os.fspath(path), os.fspath(self._snapshot_path))
+		self._log.info("Checking %s of %r against %r", (repr(meta_extractors) if meta_extractors else "all available metadata"), os.fspath(path), os.fspath(self._snapshot_path))
 
 		path = pathlib.Path(path)
 
-		files_matching = {}
 		files_changed = {}
-		files_missing = []
-		files_new = []
+		files_missing = {}
+		files_new = {}
 
 		files_input = set(self._traverse(path))
 		files_snapshot, filename_hash_algo = await self.load_snapshot_meta()
 		files_snapshot = set(files_snapshot)
+
 		num_files = len(files_snapshot)
 		num_files_processed = 0
+		num_files_matching = 0
+
 		progress_report_fmt = "Processed {:,} files of which {:,} were matching, {:,} has changed, {:,} were missing, and {:,} are new."
 		while files_snapshot:
 			progress_status = ("[{:7.2f}%] " + progress_report_fmt).format(
 				(10000 * num_files_processed / num_files) / 100.0,
 				num_files_processed,
-				len(files_matching),
+				num_files_matching,
 				len(files_changed),
 				len(files_missing),
 				len(files_new),
 			)
 			self._set_status_general(progress_status)
 			fn_snapshot = files_snapshot.pop()
+
 			if fn_snapshot in files_input:
 				files_input.remove(fn_snapshot)
-				f_snapshot_info_path = await self.get_file_info_path(filename=fn_snapshot, filename_hash_algo=filename_hash_algo)
+				f_snapshot_info_path = await self.get_file_info_path(
+					filename=fn_snapshot,
+					filename_hash_algo=filename_hash_algo
+				)
 				if f_snapshot_info_path.exists():
 					f_snapshot_info = self.read_json_file(f_snapshot_info_path)
+					f_snapshot_info = {k: self._sanitize_metadata(k, v) for k, v in f_snapshot_info.items()}
 				else:
 					f_snapshot_info = {"error": "metadata not in snapshot"}
 
@@ -133,28 +142,43 @@ class Metasnap(object):
 				)
 				f_snapshot_info = {k: v for k, v in f_snapshot_info.items() if k == "error" or k in f_info}
 				if f_info == f_snapshot_info:
-					files_matching[fn_snapshot] = sorted(f_info.keys())
+					num_files_matching += 1
 				else:
 					files_changed[fn_snapshot] = {
 						"old": f_snapshot_info,
 						"new": f_info
 					}
 			else:
-				files_missing.append(fn_snapshot)
-			num_files_processed += 1
-		self._set_status_general(None)
-		if files_input:
-			files_new.extend(files_input)
+				files_missing[fn_snapshot] = {"old": f_snapshot_info, "new": None}
 
-		assert num_files_processed == len(files_matching) + len(files_changed) + len(files_missing)
+			num_files_processed += 1
+
+		self._set_status_general(None)
+
+		for fn in files_input:
+			files_new[fn] = {
+				"old": None,
+				"new": (
+					await self.file_info(
+						path / fn,
+						meta_extractors=set([
+							*self.EXTRACTORS_ALWAYS,
+							*(meta_extractors or [])
+						]),
+						return_error=True,
+					)
+				),
+			}
+
+		assert num_files_processed == num_files_matching + len(files_changed) + len(files_missing)
 		self._log.info(progress_report_fmt.format(
 			num_files_processed,
-			len(files_matching),
+			num_files_matching,
 			len(files_changed),
 			len(files_missing),
 			len(files_new)
 		))
-		return (files_matching, files_changed, files_missing, files_new)
+		return (files_changed, files_missing, files_new)
 
 	def _ensure_snapshot_folder(self, path):
 		path = pathlib.Path(path)
@@ -182,10 +206,15 @@ class Metasnap(object):
 			folder += os.path.sep
 		for dirpath, dirnames, filenames in os.walk(folder):
 			self._set_status_general(dirpath)
+			if self.is_path_ignored(dirpath, is_dir=True):
+				del dirnames[:]
+				continue
 			for fn in filenames:
 				path = os.path.join(dirpath, fn)
 				assert path.startswith(folder)
 				path = path[len(folder):]
+				if self.is_path_ignored(path, is_dir=False):
+					continue
 				result.append(path)
 		self._set_status_general(None)
 		self._log.info("Sorting the file list.")
@@ -263,6 +292,23 @@ class Metasnap(object):
 		h.update(fn.encode("utf-8"))
 		return h.hexdigest()
 
+	def _sanitize_st_mode(self, st_mode):
+		#BUG Make sure binary negation works as expected with Python's integers not having fixed bit size.
+		return st_mode & ~self._st_mode_mask
+
+	def _sanitize_metadata(self, name, value):
+		if name == "st_mode":
+			return self._sanitize_st_mode(value)
+
+		return value
+
+	def is_path_ignored(self, path, *, is_dir):
+		path = pathlib.Path(path)
+		#TODO Properly implement file and folder filtration by means of ignore files.
+		if path.name in (".fseventsd", ".Spotlight-V100", ".DS_Store"):
+			return True
+		return False
+
 	async def file_info(self, fn, *, meta_extractors, return_error=False):
 		assert meta_extractors, meta_extractors
 		lstat = os.stat(fn, follow_symlinks=False)
@@ -274,14 +320,14 @@ class Metasnap(object):
 				if meta_extractor in self.EXTRACTORS_SUPPORTED_NOOP:
 					pass
 				elif meta_extractor in self.EXTRACTORS_SUPPORTED_STAT:
-					result[meta_extractor] = getattr(lstat, meta_extractor)
+					result[meta_extractor] = self._sanitize_metadata(meta_extractor, getattr(lstat, meta_extractor))
 				elif meta_extractor in self.EXTRACTORS_SUPPORTED_HASH:
 					if file_mode_type == stat.S_IFLNK:
 						result[meta_extractor] = await self.string_hash(os.readlink(fn), meta_extractor)
 					else:
 						result[meta_extractor] = await self.file_content_hash(fn, meta_extractor)
 				else:
-					raise ValueError(f"Unsupported meta extractor {meta_extractor!r}")
+					raise ValueError(f"Unsupported meta extractor {meta_extractor!r} for {os.fspath(fn)!r}")
 			return result
 		else:
 			error_message = f"Unsupported file type {oct(lstat.st_mode)}"
