@@ -1,4 +1,4 @@
-import os, pathlib, logging, json, hashlib, time, stat
+import os, pathlib, logging, json, hashlib, time, stat, unicodedata
 from typing import TypeAlias, Optional, Any, TypedDict
 from collections.abc import Collection, Iterable, Callable
 
@@ -12,9 +12,9 @@ MetadataExtractor: TypeAlias = str
 
 FsPathStr: TypeAlias = str
 FsPath: TypeAlias = FsPathStr | pathlib.Path
+FileList: TypeAlias = Collection[FsPathStr]
 
 FileMetadata: TypeAlias = dict[str, str | int]
-FileList: TypeAlias = Collection[FsPathStr]
 
 
 class FileCheckReport(TypedDict):
@@ -106,7 +106,7 @@ class Metasnap(object):
 		self._log.info("Updating %r of %r in %r snapshot", meta_extractors, os.fspath(path) , os.fspath(self._snapshot_path))
 
 		path = pathlib.Path(path)
-		files_input = self._traverse(path)
+		files_input: FileList = list(self._traverse(path))
 
 		self._log.info("Writing file list metadata.")
 		await self.write_snapshot_meta(
@@ -161,7 +161,12 @@ class Metasnap(object):
 		files_new:     SnapshotCheckReport = {}
 
 		files_snapshot, filename_hash_algo = await self.load_snapshot_file_list()
-		files_input = set(self._traverse(path))
+
+		# Mapping from a normalized version of file path to the OS-compatible version.
+		# The key is the normalized version which can be compared for equality.
+		# The value is the string as returned by the OS.
+		# In some cases the normalized version will fail to open the file.
+		files_input_mapping: dict[FsPathStr, FsPathStr] = {self.normalize_text(i): i for i in self._traverse(path)}
 
 		num_files = len(files_snapshot)
 		num_files_processed = 0
@@ -169,6 +174,8 @@ class Metasnap(object):
 
 		progress_report_fmt = "Processed {:,} files of which {:,} were matching, {:,} has changed, {:,} were missing, and {:,} are new."
 		for fn_snapshot in files_snapshot:
+			# The relative file path should be stored normalized in the snapshot, but just in case we can do it again.
+			fn_snapshot = self.normalize_text(fn_snapshot)
 			progress_status = ("[{:7.2f}%] " + progress_report_fmt).format(
 				(10000 * num_files_processed / num_files) / 100.0,
 				num_files_processed,
@@ -179,40 +186,40 @@ class Metasnap(object):
 			)
 			self._set_status_general(progress_status)
 
-			f_snapshot_info = await self.load_snapshot_file_meta(fn_snapshot, filename_hash_algo)
+			f_info_snapshot = await self.load_snapshot_file_meta(fn_snapshot, filename_hash_algo)
 
-			if fn_snapshot in files_input:
-				files_input.remove(fn_snapshot)
-
-				f_info = await self.file_info(
-					path / fn_snapshot,
+			fn_local = files_input_mapping.pop(fn_snapshot, None)
+			if fn_local is not None:
+				f_info_local = await self.file_info(
+					path / fn_local, # We need to pass the filesystem-friendly version here as the normalized one might fail to locate the file.
 					meta_extractors=set([
 						*self.EXTRACTORS_ALWAYS,
-						*(meta_extractors or f_snapshot_info.keys())
+						*(meta_extractors or f_info_snapshot.keys())
 					]),
 					return_error=True,
 				)
-				f_snapshot_info = {k: v for k, v in f_snapshot_info.items() if k == "error" or k in f_info}
-				if f_info == f_snapshot_info:
+				# We are only interested in metadata requested for this particular run of `check`.
+				f_info_snapshot = {k: v for k, v in f_info_snapshot.items() if k == "error" or k in f_info_local}
+				if f_info_local == f_info_snapshot:
 					num_files_matching += 1
 				else:
 					files_changed[fn_snapshot] = {
-						"old": f_snapshot_info,
-						"new": f_info
+						"old": f_info_snapshot,
+						"new": f_info_local
 					}
 			else:
-				files_missing[fn_snapshot] = {"old": f_snapshot_info, "new": None}
+				files_missing[fn_snapshot] = {"old": f_info_snapshot, "new": None}
 
 			num_files_processed += 1
 
 		self._set_status_general(None)
 
-		for fn in files_input:
-			files_new[fn] = {
+		for fn_local in files_input_mapping.values():
+			files_new[fn_local] = {
 				"old": None,
 				"new": (
 					await self.file_info(
-						path / fn,
+						path / fn_local,
 						meta_extractors=set([
 							*self.EXTRACTORS_ALWAYS,
 							*(meta_extractors or [])
@@ -250,12 +257,12 @@ class Metasnap(object):
 		assert path.exists() and path.is_dir()
 		return path
 
-	def _traverse(self, folder: FsPath) -> FileList:
+	def _traverse(self, folder: FsPath) -> Iterable[FsPathStr]:
 		folder = os.fspath(folder)
 		self._log.info("Traversing the folder recursively %r.", folder)
-		result: list[FsPathStr] = []
 		if not folder.endswith(os.path.sep):
 			folder += os.path.sep
+		num_files_found = 0
 		for dirpath, dirnames, filenames in os.walk(folder):
 			self._set_status_general(dirpath)
 			if self.is_path_ignored(dirpath, is_dir=True):
@@ -267,12 +274,10 @@ class Metasnap(object):
 				path = path[len(folder):]
 				if self.is_path_ignored(path, is_dir=False):
 					continue
-				result.append(path)
+				num_files_found += 1
+				yield path
 		self._set_status_general(None)
-		self._log.info("Sorting the file list.")
-		result.sort()
-		self._log.info("Found %s files.", "{:,}".format(len(result)))
-		return result
+		self._log.info("Found %s files.", "{:,}".format(num_files_found))
 
 	async def load_snapshot_file_list(self) -> tuple[FileList, HashAlgo]:
 		info_file_path = self._snapshot_path / "info.json"
@@ -319,6 +324,7 @@ class Metasnap(object):
 		file_list_path = info_file_path.parent / "files.json"
 
 		self._log.info("Writing the list of files to %r.", os.fspath(file_list_path))
+		file_list = sorted(self.normalize_text(f) for f in file_list)
 		self.write_json_file(file_list_path, file_list)
 
 		self._log.info("Updating %r", os.fspath(info_file_path))
@@ -346,19 +352,12 @@ class Metasnap(object):
 		return self._snapshot_path / path
 
 	async def get_file_info_path(self, *, filename: FsPath, filename_hash_algo: HashAlgo):
-		fn_hash = await self.file_name_hash(os.fspath(filename), filename_hash_algo)
+		fn_hash = await self.hash_file_name(filename, filename_hash_algo)
 		fn_hash_part_1 = fn_hash[:2]
 		fn_hash_part_2 = fn_hash[2:]
 		result = self._snapshot_path / "files" / fn_hash_part_1 / (fn_hash_part_2 + ".json")
 		os.makedirs(result.parent, exist_ok=True)
 		return result
-
-	@classmethod
-	async def file_name_hash(cls, fn: FsPathStr, hash_algo_name: HashAlgo):
-		assert isinstance(fn ,str), (fn,)
-		h = hashlib.new(hash_algo_name)
-		h.update(fn.encode("utf-8"))
-		return h.hexdigest()
 
 	def _sanitize_st_mode(self, st_mode: int) -> int:
 		#BUG Make sure binary negation works as expected with Python's integers not having fixed bit size.
@@ -381,6 +380,9 @@ class Metasnap(object):
 		return False
 
 	async def file_info(self, fn: FsPath, *, meta_extractors: Iterable[MetadataExtractor], return_error: bool = False) -> FileMetadata:
+		"""
+		The `fn` arg must not be normalized and must be as the filesystem returned during traversal.
+		"""
 		assert meta_extractors, meta_extractors
 		lstat = os.stat(fn, follow_symlinks=False)
 		file_mode_type = stat.S_IFMT(lstat.st_mode)
@@ -394,7 +396,7 @@ class Metasnap(object):
 					result[meta_extractor] = self._sanitize_metadata(meta_extractor, getattr(lstat, meta_extractor))
 				elif meta_extractor in self.EXTRACTORS_SUPPORTED_HASH:
 					if file_mode_type == stat.S_IFLNK:
-						result[meta_extractor] = await self.string_hash(os.readlink(fn), meta_extractor)
+						result[meta_extractor] = await self.hash_text(os.readlink(fn), meta_extractor)
 					else:
 						result[meta_extractor] = await self.file_content_hash(fn, meta_extractor)
 				else:
@@ -434,10 +436,23 @@ class Metasnap(object):
 			self._set_status_hash(None)
 		return h.hexdigest()
 
-	async def string_hash(self, s: str, hash_algo_name: HashAlgo) -> str:
+	async def hash_file_name(self, fn: FsPath, hash_algo_name: HashAlgo) -> str:
+		return await self.hash_text(os.fspath(fn), hash_algo_name)
+
+	async def hash_text(self, text: str, hash_algo_name: HashAlgo) -> str:
 		h = hashlib.new(hash_algo_name)
-		h.update(s.encode("utf-8")) #TODO Make sure that this is a stable encoding - what does git do with filenames?
+		h.update(
+			self.normalize_text(text).encode("UTF-8")
+		)
 		return h.hexdigest()
+
+	def normalize_text(self, text: str) -> str:
+		"""
+		Encodes unicode text in a consistent manner to make it comparable for equality.
+		"""
+		# https://en.wikipedia.org/wiki/Unicode_equivalence
+		# https://docs.python.org/3/library/unicodedata.html
+		return unicodedata.normalize("NFD", text)
 
 	def _set_status_general(self, s: StatusLineContent):
 		if self._set_status_line is None:
