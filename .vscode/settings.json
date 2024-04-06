@@ -9,4 +9,14 @@
 	},
 	"todo-tree.tree.showBadges": true,
 	"todo-tree.tree.showCountsInTree": false,
+	"cSpell.words": [
+		"docopt",
+		"fileinfo",
+		"fseventsd",
+		"fspath",
+		"inzip",
+		"Metasnap",
+		"smain",
+		"ssmain"
+	],
 }
