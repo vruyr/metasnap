@@ -149,6 +149,10 @@ class Metasnap(object):
 		SnapshotCheckReport, # files_missing
 		SnapshotCheckReport, # files_new
 	]:
+		self._log.info("Checking %s of %r against %r",
+			(repr(meta_extractors) if meta_extractors else "all available metadata"),
+			os.fspath(path), os.fspath(self._snapshot_path)
+		)
 
 		path = pathlib.Path(path)
 
