@@ -1,15 +1,24 @@
 #!/usr/bin/env python
 
 import sys, asyncio, logging, logging.config, pathlib, shutil, json, zipfile, os, collections, functools, textwrap, ast
+from collections.abc import Iterable, Sequence
+from typing import IO, TextIO, TypeAlias
 import docopt
-from .core import Metasnap
+from .core import MetadataExtractor, Metasnap, SnapshotCheckReport, StatusLineId, StatusLineContent, StatusLineSetter
 
 
-logger = None
-screen_width = shutil.get_terminal_size((None, None)).columns
+logger: logging.Logger | None = None
+screen_width = shutil.get_terminal_size((0, 0)).columns
 
 
-async def main(*, args=None, prog=None, loop=None):
+StatusLines: TypeAlias = collections.OrderedDict[StatusLineId, str]
+
+
+async def main(*,
+	args: Iterable[str],
+	prog: str,
+	loop: asyncio.AbstractEventLoop,
+) -> None:
 	opts = docopt.docopt(
 		load_usage(
 			list_of_always_included_extractors=Metasnap.EXTRACTORS_ALWAYS,
@@ -35,8 +44,10 @@ async def main(*, args=None, prog=None, loop=None):
 
 	_configure_logging()
 
-	status_lines = collections.OrderedDict()
-	status_line_setter = functools.partial(set_status_line,
+	assert logger, (logger,)
+
+	status_lines: StatusLines = collections.OrderedDict()
+	status_line_setter: StatusLineSetter = functools.partial(set_status_line,
 		status_lines=status_lines,
 		max_width=screen_width,
 		tty_fo=sys.stdout,
@@ -59,7 +70,7 @@ async def main(*, args=None, prog=None, loop=None):
 				write_report(fo, changed, missing, new)
 
 
-def write_report(fo, changed, missing, new):
+def write_report(fo: TextIO, changed: SnapshotCheckReport, missing: SnapshotCheckReport, new: SnapshotCheckReport):
 	report = {
 		**changed,
 		**missing,
@@ -69,7 +80,7 @@ def write_report(fo, changed, missing, new):
 	fo.write("\n")
 
 
-def set_status_line(status_id, text, *, status_lines, max_width, tty_fo):
+def set_status_line(status_id: StatusLineId, text: StatusLineContent, *, status_lines: StatusLines, max_width: int, tty_fo: TextIO):
 	assert status_id is not None or text is not None
 
 	cursor = len(status_lines)
@@ -115,10 +126,15 @@ def set_status_line(status_id, text, *, status_lines, max_width, tty_fo):
 	return status_id
 
 
-def load_usage(*, width=70, list_of_always_included_extractors, list_of_extractors):
+def load_usage(*,
+	width: int = 70,
+	list_of_always_included_extractors: Iterable[MetadataExtractor],
+	list_of_extractors: Iterable[MetadataExtractor],
+):
 	usage_file_encoding = "UTF-8"
 	usage_file = pathlib.Path(__file__).parent / "usage.txt"
 	result = None
+	fo: IO[bytes]
 	if usage_file.exists():
 		with usage_file.open("rb") as fo:
 			result = fo.read().decode(usage_file_encoding)
@@ -136,7 +152,7 @@ def load_usage(*, width=70, list_of_always_included_extractors, list_of_extracto
 		else:
 			raise RuntimeError("Failed to find usage.txt")
 
-	def format_list(l):
+	def format_list(l: Iterable[str]):
 		#TODO Do not assume usage text is indented with two spaces.
 		return "\n  ".join(textwrap.wrap(
 			", ".join(l),
@@ -177,7 +193,7 @@ def _configure_logging():
 	logger = logging.getLogger(__name__)
 
 
-def _smain(*, argv=None):
+def _smain(*, argv: Sequence[str]):
 	if sys.platform == "win32":
 		loop = asyncio.ProactorEventLoop()
 		asyncio.set_event_loop(loop)
