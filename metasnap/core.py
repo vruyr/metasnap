@@ -295,6 +295,7 @@ class Metasnap(object):
 		files_fileinfo = files_meta["content"]
 		if files_fileinfo != await self.file_info(file_list_path, meta_extractors=list(files_fileinfo.keys())):
 			raise ValueError(f"Snapshot at {self._snapshot_path!r} is corrupted.")
+		self._log.info("The file list metadata check has passed for %s.", ",".join(files_fileinfo.keys()))
 		filename_hash_algo = files_meta["name_hash_algo"]
 
 		file_list: FileList
