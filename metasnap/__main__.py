@@ -54,7 +54,8 @@ async def main(*,
 	)
 	#TODO If anything is written to the same tty_fo without clearing the status first - the output will be messed up.
 
-	logger.info("Report will be written to %s", repr(report_file_path) if report_file_path != "-" else "stdout")
+	if not must_update:
+		logger.info("Report will be written to %s", repr(report_file_path) if report_file_path != "-" else "stdout")
 
 	ss = Metasnap(snapshot_dir, status_line_setter=status_line_setter, st_mode_mask=st_mode_mask)
 
