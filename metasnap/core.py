@@ -82,7 +82,7 @@ class Metasnap(object):
 		snapshot_dir: pathlib.Path,
 		*,
 		status_line_setter: Optional[StatusLineSetter] = None,
-		chunk_size: int = (512 * 2014),
+		chunk_size: int = (512 * 1024),
 		st_mode_mask: int = 0
 	):
 		self._log = logging.getLogger(__name__)

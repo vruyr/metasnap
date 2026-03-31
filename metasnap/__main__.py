@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import sys, argparse, asyncio, logging, logging.config, pathlib, shutil, json, os, collections, functools, ast, textwrap
+import sys, argparse, asyncio, importlib.metadata, logging, logging.config, pathlib, shutil, json, os, collections, functools, ast, textwrap
 from collections.abc import Sequence
 from typing import TextIO, TypeAlias
 from .core import Metasnap, SnapshotCheckReport, StatusLineId, StatusLineContent, StatusLineSetter
@@ -34,7 +34,7 @@ def parse_args(*, args, prog):
 	parser.add_argument("--help", "-h",
 		action="help",
 		help="Show help message and exit.")
-	parser.add_argument("--version", action="version", version="0.0.0")
+	parser.add_argument("--version", action="version", version=importlib.metadata.version("metasnap"))
 	parser.add_argument("--input", "-i", required=True, metavar="DIR_PATH",
 		help="Path to the input folder.")
 	parser.add_argument("--snapshot", "-s", required=True, metavar="DIR_PATH",
@@ -186,12 +186,7 @@ def _configure_logging():
 
 def _smain(*, argv: Sequence[str]):
 	opts = parse_args(args=argv[1:], prog=argv[0])
-	if sys.platform == "win32":
-		loop = asyncio.ProactorEventLoop()
-		asyncio.set_event_loop(loop)
-	else:
-		loop = asyncio.get_event_loop()
-	loop.run_until_complete(main(**opts))
+	asyncio.run(main(**opts))
 
 
 def _ssmain():
