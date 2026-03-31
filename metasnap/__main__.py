@@ -1,10 +1,9 @@
 #!/usr/bin/env python
 
-import sys, asyncio, logging, logging.config, pathlib, shutil, json, zipfile, os, collections, functools, textwrap, ast
-from collections.abc import Iterable, Sequence
-from typing import IO, TextIO, TypeAlias
-import docopt
-from .core import MetadataExtractor, Metasnap, SnapshotCheckReport, StatusLineId, StatusLineContent, StatusLineSetter
+import sys, argparse, asyncio, logging, logging.config, pathlib, shutil, json, os, collections, functools, ast, textwrap
+from collections.abc import Sequence
+from typing import TextIO, TypeAlias
+from .core import Metasnap, SnapshotCheckReport, StatusLineId, StatusLineContent, StatusLineSetter
 
 
 logger: logging.Logger | None = None
@@ -14,33 +13,63 @@ screen_width = shutil.get_terminal_size((0, 0)).columns
 StatusLines: TypeAlias = collections.OrderedDict[StatusLineId, str]
 
 
-async def main(*,
-	args: Iterable[str],
-	prog: str,
-	loop: asyncio.AbstractEventLoop,
-) -> None:
-	opts = docopt.docopt(
-		load_usage(
-			list_of_always_included_extractors=Metasnap.EXTRACTORS_ALWAYS,
-			list_of_extractors=Metasnap.all_supported_extractors(),
-		),
-		argv=args,
-		options_first=False,
-		help=True,
-		version="0.0.0"
-	)
-	assert opts.pop("--help") is False
-	assert opts.pop("--version") is False
-	must_update = opts.pop("--update")
-	input_dir = pathlib.Path(opts.pop("--input")).resolve()
-	snapshot_dir = pathlib.Path(opts.pop("--snapshot")).resolve()
-	st_mode_mask = ast.literal_eval(opts.pop("--umask", None) or "0") & 0o0777
-	meta_extractors = opts.pop("--extractor")
+def parse_args(*, args, prog):
+	parser = argparse.ArgumentParser(
+		prog=prog,
+		description="Create and verify file metadata snapshots.",
+		epilog=textwrap.dedent("""\
+			always included extractors:
+			  {always}
 
-	report_file_path = opts.pop("--check")
-	if must_update:
-		assert report_file_path is None
-	assert not opts, opts
+			supported extractors:
+			  {supported}
+		""").format(
+			always=", ".join(Metasnap.EXTRACTORS_ALWAYS),
+			supported=", ".join(Metasnap.all_supported_extractors()),
+		),
+		formatter_class=argparse.RawDescriptionHelpFormatter,
+		add_help=False,
+	)
+
+	parser.add_argument("--help", "-h",
+		action="help",
+		help="Show help message and exit.")
+	parser.add_argument("--version", action="version", version="0.0.0")
+	parser.add_argument("--input", "-i", required=True, metavar="DIR_PATH",
+		help="Path to the input folder.")
+	parser.add_argument("--snapshot", "-s", required=True, metavar="DIR_PATH",
+		help="Path to the snapshot folder.")
+	parser.add_argument("--extractor", "-e", action="append", default=[], metavar="NAME",
+		help="Name of a metadata extractor to include. Can be specified multiple times.")
+	parser.add_argument("--umask", metavar="MODE", default="0",
+		help="st_mode = st_mode & ~umask. Similar to umask(2). "
+			"Use 0o077 to ignore all permissions for group and other. "
+			"Use 0o177 to also ignore the execute bit for the file owner.")
+
+	mode = parser.add_mutually_exclusive_group(required=True)
+
+	mode.add_argument("--update", "-u", action="store_true", dest="must_update",
+		help="Create or update the snapshot for the input folder.")
+	mode.add_argument("--check", "-c", metavar="REPORT_FILE_PATH",
+		help="Check if the snapshot matches the input folder. "
+			"Results will be written to REPORT_FILE_PATH (or stdout if '-').")
+	opts = parser.parse_args(args)
+	return vars(opts)
+
+
+async def main(*,
+	input,
+	snapshot,
+	must_update,
+	check,
+	extractor,
+	umask,
+) -> None:
+	input_dir = pathlib.Path(input).resolve()
+	snapshot_dir = pathlib.Path(snapshot).resolve()
+	st_mode_mask = ast.literal_eval(umask) & 0o0777
+	meta_extractors = extractor
+	report_file_path = check
 
 	_configure_logging()
 
@@ -127,45 +156,6 @@ def set_status_line(status_id: StatusLineId, text: StatusLineContent, *, status_
 	return status_id
 
 
-def load_usage(*,
-	width: int = 70,
-	list_of_always_included_extractors: Iterable[MetadataExtractor],
-	list_of_extractors: Iterable[MetadataExtractor],
-):
-	usage_file_encoding = "UTF-8"
-	usage_file = pathlib.Path(__file__).parent / "usage.txt"
-	result = None
-	fo: IO[bytes]
-	if usage_file.exists():
-		with usage_file.open("rb") as fo:
-			result = fo.read().decode(usage_file_encoding)
-	else:
-		zipfile_path = usage_file
-		while zipfile_path.parts != ():
-			zipfile_path = zipfile_path.parent
-			usage_file_inzip = usage_file.relative_to(zipfile_path)
-			if not zipfile_path.exists():
-				continue
-			with zipfile.ZipFile(zipfile_path) as zf:
-				with zf.open(os.fspath(usage_file_inzip), "r") as fo:
-					result = fo.read().decode(usage_file_encoding)
-					break
-		else:
-			raise RuntimeError("Failed to find usage.txt")
-
-	def format_list(l: Iterable[str]):
-		#TODO Do not assume usage text is indented with two spaces.
-		return "\n  ".join(textwrap.wrap(
-			", ".join(l),
-			width=width,
-		))
-
-	return result.format(
-		list_of_always_included_extractors=format_list(list_of_always_included_extractors),
-		list_of_extractors=format_list(list_of_extractors),
-	)
-
-
 def _configure_logging():
 	logging.config.dictConfig({
 		"version": 1,
@@ -195,12 +185,13 @@ def _configure_logging():
 
 
 def _smain(*, argv: Sequence[str]):
+	opts = parse_args(args=argv[1:], prog=argv[0])
 	if sys.platform == "win32":
 		loop = asyncio.ProactorEventLoop()
 		asyncio.set_event_loop(loop)
 	else:
 		loop = asyncio.get_event_loop()
-	loop.run_until_complete(main(args=argv[1:], prog=argv[0], loop=loop))
+	loop.run_until_complete(main(**opts))
 
 
 def _ssmain():

@@ -21,12 +21,5 @@ setup(
 			"metasnap = metasnap.__main__:_ssmain",
 		],
 	},
-	package_data={
-		"": [
-			"usage.txt"
-		],
-	},
-	install_requires=[
-		"docopt>=0.6.2,<0.7.0",
-	]
+	install_requires=[]
 )
