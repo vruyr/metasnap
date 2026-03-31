@@ -4,10 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "metasnap"
-version = "0.0.0"
+version = "0.0.1"
 description = "Create and verify file metadata snapshots."
 license = "MIT"
 requires-python = ">=3.10"
+readme = "README.md"
+authors = [{name = "Vruyr Gyolchanyan"}]
+
+[project.urls]
+Repository = "https://github.com/vruyr/metasnap"
 
 [project.scripts]
 metasnap = "metasnap.__main__:_ssmain"
