@@ -7,7 +7,7 @@ name = "metasnap"
 version = "0.0.0"
 description = "Create and verify file metadata snapshots."
 license = "MIT"
-requires-python = ">=3.6"
+requires-python = ">=3.10"
 
 [project.scripts]
 metasnap = "metasnap.__main__:_ssmain"

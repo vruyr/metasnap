@@ -1,5 +1,5 @@
 import os, pathlib, logging, json, hashlib, time, stat, unicodedata
-from typing import TypeAlias, Optional, Any, TypedDict
+from typing import TypeAlias, Any, TypedDict
 from collections.abc import Collection, Iterable, Callable
 
 
@@ -36,7 +36,7 @@ class MetasnapInfo(TypedDict):
 	files: MetasnapInfoFiles | None
 
 
-class Metasnap(object):
+class Metasnap:
 	__slots__ = (
 		"_set_status_line",
 		"_status_general",
@@ -81,7 +81,7 @@ class Metasnap(object):
 	def __init__(self,
 		snapshot_dir: pathlib.Path,
 		*,
-		status_line_setter: Optional[StatusLineSetter] = None,
+		status_line_setter: StatusLineSetter | None = None,
 		chunk_size: int = (512 * 1024),
 		st_mode_mask: int = 0
 	):
