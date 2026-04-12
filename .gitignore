@@ -7,3 +7,13 @@ __pycache__/
 /.idea/
 /metasnap.egg-info/
 #}}}
+
+#{{{ Transient
+#
+# Lock files are deliberately NOT committed to git.
+# See: The Case Against Committing Lock Files
+# obsidian://search?query=A3903438-A1B2-41C5-A8AA-1BEADA114DA8
+# Don't cargo-cult the convention to commit.
+#
+/uv.lock
+#}}}
